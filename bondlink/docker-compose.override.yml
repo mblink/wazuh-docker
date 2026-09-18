@@ -1,0 +1,259 @@
+# BondLink customizations layered on top of ../multi-node/docker-compose.yml
+# (stock wazuh-docker v4.14.0). Ported from /src/wazuh-docker-4.10/multi-node,
+# organized the same way as the 5.0 port in wazuh-docker (5.0-align branch),
+# with the audit-identified bugs fixed along the way (see README.md).
+#
+# Usage (from the repo root):
+#   docker compose \
+#     -f multi-node/docker-compose.yml \
+#     -f bondlink/docker-compose.override.yml \
+#     up -d
+#
+# IMPORTANT: Compose resolves every relative bind-mount path in ALL merged
+# files against the directory of the FIRST -f file (multi-node/), not each
+# file's own directory -- paths below are ../bondlink/config/... accordingly.
+# Verify with:
+#   docker compose -f multi-node/docker-compose.yml -f bondlink/docker-compose.override.yml config
+#
+# `volumes:` on services where we swap an existing mounted file (not just add
+# a new one) uses the `!override` merge tag -- Compose concatenates list-type
+# keys like `volumes`/`ports` across files by default, so without !override
+# both the stock and bondlink mounts would land on the same container target
+# path. `environment:` is merged as a map (key-by-key), so no !override is
+# needed there -- redeclaring a key in this file simply replaces its value.
+
+# `name:` pins the compose project name to "multi-node" explicitly, matching
+# the production fork's actual running project name (confirmed via
+# `docker inspect`'s com.docker.compose.project label) -- Compose otherwise
+# derives this from the invoking directory's basename, which happens to
+# already match here but shouldn't be relied on implicitly. This is what
+# makes an in-place cutover (bring this stack up in place of the old fork)
+# reattach to the exact same named volumes -- master-wazuh-etc,
+# wazuh-indexer-data-1/2/3, etc. -- with no data migration step at all,
+# since neither `docker compose down` nor swapping which compose file you
+# run touches named volumes, only the project name does.
+name: multi-node
+
+services:
+  wazuh.master:
+    # Pinned by digest -- docker.io/wazuh/wazuh-manager:4.14.0 is a mutable
+    # tag that has changed content since this port was last validated
+    # (confirmed via `docker pull` reporting "Downloaded newer image").
+    # Re-validate before ever bumping this.
+    image: wazuh/wazuh-manager@sha256:d2387a8304391600154c7b8604b390c8b798ec1403b5f1f707703bafdb230f84
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "wazuh-warm1.indexer:10.0.2.103"
+    # Real values come from bondlink/.env.secrets (salt-rendered, gitignored --
+    # see salt/wazuh-docker/init.sls's wazuh-docker-env-secrets state) via
+    # compose's ${VAR} substitution -- NOT env_file:, which loses to
+    # multi-node/docker-compose.yml's own `environment:` entries for these
+    # same keys regardless of file order (environment: always wins over
+    # env_file: for a given key in Compose's merge model). Must invoke with
+    # `--env-file bondlink/.env.secrets` from the repo root (see README.md's
+    # Usage section) or these fall back to compose's own unset-variable
+    # behavior (empty string), not silently to the stock example values.
+    environment:
+      API_USERNAME: ${API_USERNAME}
+      API_PASSWORD: ${API_PASSWORD}
+      INDEXER_USERNAME: ${INDEXER_USERNAME}
+      INDEXER_PASSWORD: ${INDEXER_PASSWORD}
+    volumes: !override
+      - master-wazuh-api-configuration:/var/ossec/api/configuration
+      - master-wazuh-etc:/var/ossec/etc
+      - master-wazuh-logs:/var/ossec/logs
+      - master-wazuh-queue:/var/ossec/queue
+      - master-wazuh-var-multigroups:/var/ossec/var/multigroups
+      - master-wazuh-integrations:/var/ossec/integrations
+      - master-wazuh-active-response:/var/ossec/active-response/bin
+      - master-wazuh-agentless:/var/ossec/agentless
+      - master-wazuh-wodles:/var/ossec/wodles
+      - master-filebeat-etc:/etc/filebeat
+      - master-filebeat-var:/var/lib/filebeat
+      # root-ca.pem, not a separate root-ca-manager.pem -- that name (also
+      # referenced by upstream's own multi-node/docker-compose.yml, not just
+      # this override) isn't produced by the cert-generator or documented
+      # anywhere in this repo or upstream's; confirmed live that copying
+      # root-ca.pem to that name and using it works identically, since it's
+      # the same cluster-wide root CA every other service already mounts
+      # under its real name. No separate cert to maintain.
+      - ./config/wazuh_indexer_ssl_certs/root-ca.pem:/etc/ssl/root-ca.pem
+      - ./config/wazuh_indexer_ssl_certs/wazuh.master.pem:/etc/ssl/filebeat.pem
+      - ./config/wazuh_indexer_ssl_certs/wazuh.master-key.pem:/etc/ssl/filebeat.key
+      - /etc/wazuh-docker-runtime/wazuh_manager.conf:/wazuh-config-mount/etc/ossec.conf
+      - /var/wazuh/imports:/var/ossec/imports
+      - /mnt/backups:/mnt/backups:shared
+
+  wazuh.worker:
+    image: wazuh/wazuh-manager@sha256:d2387a8304391600154c7b8604b390c8b798ec1403b5f1f707703bafdb230f84
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "wazuh-warm1.indexer:10.0.2.103"
+    environment:
+      INDEXER_USERNAME: ${INDEXER_USERNAME}
+      INDEXER_PASSWORD: ${INDEXER_PASSWORD}
+    volumes: !override
+      - worker-wazuh-api-configuration:/var/ossec/api/configuration
+      - worker-wazuh-etc:/var/ossec/etc
+      - worker-wazuh-logs:/var/ossec/logs
+      - worker-wazuh-queue:/var/ossec/queue
+      - worker-wazuh-var-multigroups:/var/ossec/var/multigroups
+      - worker-wazuh-integrations:/var/ossec/integrations
+      - worker-wazuh-active-response:/var/ossec/active-response/bin
+      - worker-wazuh-agentless:/var/ossec/agentless
+      - worker-wazuh-wodles:/var/ossec/wodles
+      - worker-filebeat-etc:/etc/filebeat
+      - worker-filebeat-var:/var/lib/filebeat
+      # See wazuh.master above -- same root-ca.pem, not a separate file.
+      - ./config/wazuh_indexer_ssl_certs/root-ca.pem:/etc/ssl/root-ca.pem
+      - ./config/wazuh_indexer_ssl_certs/wazuh.worker.pem:/etc/ssl/filebeat.pem
+      - ./config/wazuh_indexer_ssl_certs/wazuh.worker-key.pem:/etc/ssl/filebeat.key
+      - /etc/wazuh-docker-runtime/wazuh_worker.conf:/wazuh-config-mount/etc/ossec.conf
+      - /var/wazuh/imports:/var/ossec/imports
+      - /mnt/backups:/mnt/backups:shared
+
+  wazuh1.indexer:
+    # Pinned by digest, not floating tag: docker.io/wazuh/wazuh-indexer:4.14.0
+    # is mutable and has changed content since this port was first validated
+    # (confirmed via `docker pull` reporting "Downloaded newer image" against
+    # a digest cached from a prior pull) -- an unpinned tag risks silently
+    # swapping in a build with a different internal config path convention
+    # on a routine `docker compose pull`. Re-validate before ever bumping this.
+    image: wazuh/wazuh-indexer@sha256:0f1eb6c22912ca7948679cc3eca05346464678a42cab5cf5b1e17b99659e3582
+    environment:
+      - OPENSEARCH_JAVA_OPTS=-Xms4g -Xmx4g
+      - bootstrap.memory_lock=true
+      - WAZUH_INDEXER_NODE_TYPE=hot
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+    volumes: !override
+      - wazuh-indexer-data-1:/var/lib/wazuh-indexer
+      - ./config/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-indexer/config/certs/root-ca.pem
+      - ./config/wazuh_indexer_ssl_certs/wazuh1.indexer-key.pem:/usr/share/wazuh-indexer/config/certs/wazuh1.indexer.key
+      - ./config/wazuh_indexer_ssl_certs/wazuh1.indexer.pem:/usr/share/wazuh-indexer/config/certs/wazuh1.indexer.pem
+      - ./config/wazuh_indexer_ssl_certs/admin.pem:/usr/share/wazuh-indexer/config/certs/admin.pem
+      - ./config/wazuh_indexer_ssl_certs/admin-key.pem:/usr/share/wazuh-indexer/config/certs/admin-key.pem
+      - /etc/wazuh-docker-runtime/wazuh1.indexer.yml:/usr/share/wazuh-indexer/config/opensearch.yml
+      - ./config/wazuh_indexer/internal_users.yml:/usr/share/wazuh-indexer/config/opensearch-security/internal_users.yml
+      - /mnt/backups:/mnt/backups:shared
+
+  wazuh2.indexer:
+    image: wazuh/wazuh-indexer@sha256:0f1eb6c22912ca7948679cc3eca05346464678a42cab5cf5b1e17b99659e3582
+    environment:
+      - OPENSEARCH_JAVA_OPTS=-Xms4g -Xmx4g
+      - bootstrap.memory_lock=true
+      - WAZUH_INDEXER_NODE_TYPE=hot
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+    volumes: !override
+      - wazuh-indexer-data-2:/var/lib/wazuh-indexer
+      - ./config/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-indexer/config/certs/root-ca.pem
+      - ./config/wazuh_indexer_ssl_certs/wazuh2.indexer-key.pem:/usr/share/wazuh-indexer/config/certs/wazuh2.indexer.key
+      - ./config/wazuh_indexer_ssl_certs/wazuh2.indexer.pem:/usr/share/wazuh-indexer/config/certs/wazuh2.indexer.pem
+      - /etc/wazuh-docker-runtime/wazuh2.indexer.yml:/usr/share/wazuh-indexer/config/opensearch.yml
+      - ./config/wazuh_indexer/internal_users.yml:/usr/share/wazuh-indexer/config/opensearch-security/internal_users.yml
+      - /mnt/backups:/mnt/backups:shared
+
+  wazuh3.indexer:
+    image: wazuh/wazuh-indexer@sha256:0f1eb6c22912ca7948679cc3eca05346464678a42cab5cf5b1e17b99659e3582
+    environment:
+      - OPENSEARCH_JAVA_OPTS=-Xms4g -Xmx4g
+      - bootstrap.memory_lock=true
+      - WAZUH_INDEXER_NODE_TYPE=hot
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+    volumes: !override
+      - wazuh-indexer-data-3:/var/lib/wazuh-indexer
+      - ./config/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-indexer/config/certs/root-ca.pem
+      - ./config/wazuh_indexer_ssl_certs/wazuh3.indexer-key.pem:/usr/share/wazuh-indexer/config/certs/wazuh3.indexer.key
+      - ./config/wazuh_indexer_ssl_certs/wazuh3.indexer.pem:/usr/share/wazuh-indexer/config/certs/wazuh3.indexer.pem
+      - /etc/wazuh-docker-runtime/wazuh3.indexer.yml:/usr/share/wazuh-indexer/config/opensearch.yml
+      - ./config/wazuh_indexer/internal_users.yml:/usr/share/wazuh-indexer/config/opensearch-security/internal_users.yml
+      - /mnt/backups:/mnt/backups:shared
+
+  wazuh.dashboard:
+    # Pinned by digest -- see wazuh.master above for why.
+    image: wazuh/wazuh-dashboard@sha256:ee2bad5f799e29a2a1ba218a634749a3bcd823e6f1aa09482b5d81bdba886b6c
+    # See wazuh.master above -- ${VAR} substitution from --env-file, not
+    # env_file:, which multi-node/docker-compose.yml's own API_/DASHBOARD_
+    # `environment:` entries would silently win over.
+    environment:
+      API_USERNAME: ${API_USERNAME}
+      API_PASSWORD: ${API_PASSWORD}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD}
+    # HAProxy in front of the dashboard terminates TLS, so the dashboard
+    # listens plain HTTP on 80 (stock listens HTTPS on 5601).
+    ports: !override
+      - "80:80"
+    volumes: !override
+      - ./config/wazuh_indexer_ssl_certs/wazuh.dashboard.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem
+      - ./config/wazuh_indexer_ssl_certs/wazuh.dashboard-key.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem
+      - ./config/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-dashboard/certs/root-ca.pem
+      - ../bondlink/config/wazuh_dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
+      - /etc/wazuh-docker-runtime/wazuh.yml:/usr/share/wazuh-dashboard/data/wazuh/config/wazuh.yml
+      - wazuh-dashboard-config:/usr/share/wazuh-dashboard/data/wazuh/config
+      - wazuh-dashboard-custom:/usr/share/wazuh-dashboard/plugins/wazuh/public/assets/custom
+      - /mnt/backups:/mnt/backups:shared
+
+  # nginx.conf's stream{} block resolves wazuh.master/wazuh.worker's
+  # hostnames to container IPs once, at nginx's own startup -- there's no
+  # resolver directive, so it never re-resolves after that. Every time
+  # master/worker get recreated (a new internal Docker IP each time),
+  # nginx keeps trying the stale IP until something restarts nginx itself,
+  # surfacing as "no live upstreams while connecting to upstream" for every
+  # agent trying to ship data on 1514 -- confirmed live. depends_on's
+  # restart: true cascades a restart to nginx whenever either backend
+  # restarts, so this can't drift silently again. Must use the full map
+  # form for all three deps (can't mix short-list and long-map form for
+  # one service) -- wazuh.dashboard doesn't need restart: true since
+  # nothing here proxies to it, just kept for the same startup ordering
+  # upstream's own short-form list already provided.
+  nginx:
+    depends_on:
+      wazuh.master:
+        condition: service_started
+        restart: true
+      wazuh.worker:
+        condition: service_started
+        restart: true
+      wazuh.dashboard:
+        condition: service_started
+
+  # Renamed away from amazon/cloudwatch-agent / alpine:latest -- the 4.10
+  # source shadowed those public Docker Hub tags with locally-built images
+  # of the same name, which is fragile on any host also running plain
+  # alpine/cwagent containers.
+  cloudwatch-agent:
+    build:
+      context: ../bondlink/build/cloudwatch-agent
+      args:
+        REGION: us-east-1
+        LOG_GROUP_NAME: wazuh-manager
+        LOG_STREAM_NAME: StagingIDS
+    image: bondlink/wazuh-cwagent:4.10-align
+    hostname: wazuh.cwagent
+    restart: always
+    depends_on:
+      - wazuh.master
+    volumes:
+      - master-wazuh-logs:/var/ossec/logs:ro
+
+  cron-backup:
+    build:
+      context: ../bondlink/build/cron-backup
+      args:
+        S3_ENV_PATH: bondlink-data/ossec-logs/prod/
+    image: bondlink/wazuh-cron-backup:4.10-align
+    hostname: wazuh.cron
+    restart: always
+    depends_on:
+      - wazuh.master
+    volumes:
+      - master-wazuh-logs:/var/ossec/logs
