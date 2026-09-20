@@ -44,6 +44,9 @@ RUN mkdir -p $INSTALL_DIR/data/wazuh/config && chmod -R 775 $INSTALL_DIR/data/wa
 RUN mkdir -p $INSTALL_DIR/data/wazuh/logs && chmod -R 775 $INSTALL_DIR/data/wazuh/logs
 RUN setcap 'cap_net_bind_service=-ep' /usr/share/wazuh-dashboard/node/bin/node
 
+# Delete default keystore
+RUN if [ -f /etc/wazuh-dashboard/opensearch_dashboards.keystore ]; then rm -f /etc/wazuh-dashboard/opensearch_dashboards.keystore; fi
+
 ################################################################################
 # Build stage 1 (the current Wazuh dashboard image):
 # Copy wazuh-dashboard from builder
@@ -59,20 +62,7 @@ ARG WAZUH_GID=101
 ENV USER="wazuh-dashboard" \
     GROUP="wazuh-dashboard" \
     NAME="wazuh-dashboard" \
-    INSTALL_DIR="/usr/share/wazuh-dashboard" \
-    PATTERN="" \
-    CHECKS_PATTERN="" \
-    CHECKS_TEMPLATE="" \
-    CHECKS_API="" \
-    CHECKS_SETUP="" \
-    APP_TIMEOUT="" \
-    API_SELECTOR="" \
-    IP_SELECTOR="" \
-    IP_IGNORE="" \
-    WAZUH_MONITORING_ENABLED="" \
-    WAZUH_MONITORING_FREQUENCY="" \
-    WAZUH_MONITORING_SHARDS="" \
-    WAZUH_MONITORING_REPLICAS=""
+    INSTALL_DIR="/usr/share/wazuh-dashboard"
 
 # Copy and set permissions to scripts
 COPY config/entrypoint.sh /

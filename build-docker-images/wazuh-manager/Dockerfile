@@ -16,7 +16,7 @@ ARG WAZUH_UID=101
 ARG WAZUH_GID=101
 
 # Prepare permanent data config needed by permanent_data.sh at build time
-COPY config/permanent_data.env config/permanent_data.sh /
+COPY config/permanent_data.env config/permanent_data.sh config/check-data-exceptions.sh /
 
 RUN dnf install openssl findutils procps shadow-utils -y && \
     dnf clean all && \
@@ -43,15 +43,34 @@ RUN dnf install openssl findutils procps shadow-utils -y && \
     chown root:wazuh-manager /var/wazuh-manager/var/multigroups && \
     chmod 770 /var/wazuh-manager/var/multigroups && \
     mkdir -p /var/wazuh-manager/etc/certs && \
-    chown wazuh-manager:wazuh-manager /var/wazuh-manager/etc/certs && \
-    chmod 500 /var/wazuh-manager/etc/certs && \
-    rm -f /var/wazuh-manager/etc/sslmanager.key && \
-    rm -f /var/wazuh-manager/etc/sslmanager.cert
+    chown root:wazuh-manager /var/wazuh-manager/etc/certs && \
+    chmod 1770 /var/wazuh-manager/etc/certs && \
+    # Remove manager self-signed certificate/key
+    rm -f /var/wazuh-manager/etc/certs/remoted.pem \
+          /var/wazuh-manager/etc/certs/remoted-key.pem \
+          /var/wazuh-manager/etc/certs/apid.pem \
+          /var/wazuh-manager/etc/certs/apid-key.pem && \
+    # Clear the cluster key for the same reason the certificates above are
+    # removed: the installer generates it once, here, and copying the installed
+    # tree into the image would publish that single secret inside every pull of
+    # this tag. Each container generates its own key on first start
+    # (etc/cont-init.d/0-wazuh-init) unless WAZUH_CLUSTER_KEY is set.
+    # This runs before permanent_data.sh, so the snapshot restored into a fresh
+    # 'etc' volume ships the empty key too.
+    sed -i "/<cluster>/,/<\/cluster>/ s|<key>.*</key>|<key></key>|" \
+        /var/wazuh-manager/etc/wazuh-manager.conf
 
 # Prepare permanent data snapshot (sync calls: https://github.com/docker/docker/issues/9547)
 RUN chmod 755 /permanent_data.sh && \
     sync && /permanent_data.sh && \
     sync && rm /permanent_data.sh
+
+# Fail the build if the image ships content under data/ that neither the exclusion
+# list nor the manager itself owns: a deployment upgrading onto an existing data
+# volume would never see it. See docs/ref/configuration/configuration-files.md.
+RUN chmod 755 /check-data-exceptions.sh && \
+    /check-data-exceptions.sh && \
+    rm /check-data-exceptions.sh
 
 # Download tini static binary (no external library dependencies)
 RUN curl --fail --silent -L \
@@ -90,12 +109,20 @@ COPY --from=builder /usr/local/bin/tini /usr/local/bin/tini
 
 # Copy entrypoint, init scripts and runtime config
 COPY config/entrypoint.sh /entrypoint.sh
+COPY config/password-tool.sh /password-tool.sh
 COPY config/etc/ /etc/
 COPY config/permanent_data.env /
 
-RUN chmod 755 /entrypoint.sh
+RUN chmod 755 /entrypoint.sh /password-tool.sh && \
+    chmod 700 /etc/wazuh-api-users.py
 
 # Services ports
-EXPOSE 55000/tcp 1514/tcp 1515/tcp 514/udp 1516/tcp
+#   1517/tcp: agent communication and enrollment (Wazuh 5.x agents, HTTPS)
+#   1514/tcp: agent communication for Wazuh 4.x agents (legacy remoted)
+#   1515/tcp: agent enrollment for Wazuh 4.x agents (authd)
+#   514/udp:  syslog event collection
+#   1516/tcp: cluster communication between manager nodes
+#   55000/tcp: Wazuh API
+EXPOSE 55000/tcp 1517/tcp 1514/tcp 1515/tcp 514/udp 1516/tcp
 
 ENTRYPOINT ["/usr/local/bin/tini", "--", "/entrypoint.sh"]

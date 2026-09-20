@@ -4,6 +4,15 @@ Workflow file: `.github/workflows/5_check_integration_tools.yml`
 
 This workflow optionally builds Docker images from the PR branch, provisions a dedicated AWS VM, deploys the Wazuh Docker stack (single-node or multi-node), and runs the integration test suite against it via SSH.
 
+A second, self-contained check lives in the repository and needs no AWS VM. Run it from the directory of a Compose file against a running deployment:
+
+```bash
+cd single-node
+../tools/tests/check-default-credentials.sh
+```
+
+It asserts that the Wazuh indexer image ships none of the OpenSearch demo accounts and that no Wazuh indexer or Wazuh API account authenticates with its own username as its password. A deployment that has not been through the first-start password change fails it; see [Credentials](../credentials.md).
+
 ---
 
 ## Triggers
@@ -215,7 +224,9 @@ Runs on the **runner** (not the VM):
 
 3. **Copy `wazuh-docker/` to VM** via SCP: `scp -r wazuh-docker {remote}:/tmp/wazuh-docker`
 
-4. **Generate certificates on VM**: runs `tools/utils/deployment/certificates-conf.sh --cert --copy` inside `/tmp/wazuh-docker/{deployment}/`
+4. **Generate certificates on VM**: runs `tools/utils/deployment/certificates-conf.sh --cert --copy --priv --agent-san {SSH_HOST}` inside `/tmp/wazuh-docker/{deployment}/`
+
+   `--agent-san` puts the VM's own address in the agent listener certificate of every manager node, which is the address an agent outside the Compose network dials on `1517`. In multi-node it is the only way to cover the shared `nginx` entry point, since the script rejects one address repeated across manager nodes in `config.yml`.
 
 #### Deployment
 
@@ -230,6 +241,13 @@ Waits up to **15 minutes** polling every 10 seconds until all non-nginx containe
 After containers are healthy, waits for steady state:
 - `single-node`: 60 seconds
 - `multi-node`: 90 seconds
+
+#### Agent listener certificate checks
+
+Run on the VM once the containers are healthy, before the test module:
+
+1. **Per manager node**: prints the ownership and mode of `etc/certs`, and the subject, validity, SAN and extended key usage of `etc/certs/remoted.pem`; verifies it against the mounted `etc/certs/root-ca.pem`; and fails if two manager nodes present the same fingerprint.
+2. **From the host**: `openssl s_client -connect localhost:1517 -CAfile config/root-ca/certs/root-ca.pem` has to report `Verify return code: 0 (ok)`, which is the check an agent outside the Compose network performs on the published port.
 
 #### Test execution
 

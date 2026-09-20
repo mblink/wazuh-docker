@@ -4,7 +4,7 @@
 # Variables
 source /permanent_data.env
 
-WAZUH_INSTALL_PATH=/var/wazuh-manager
+WAZUH_INSTALL_PATH=/var/ossec
 DATA_TMP_PATH=${WAZUH_INSTALL_PATH}/data_tmp
 mkdir ${DATA_TMP_PATH}
 
@@ -12,18 +12,15 @@ mkdir ${DATA_TMP_PATH}
 EXCLUSION_PATH=${DATA_TMP_PATH}/exclusion
 mkdir ${EXCLUSION_PATH}
 
-for exclusion_path in "${PERMANENT_DATA_EXCP[@]}"; do
-  # Create the parent directory for the exclusion entry if it does not exist
-  DIR=$(dirname "${exclusion_path}")
+for exclusion_file in "${PERMANENT_DATA_EXCP[@]}"; do
+  # Create the directory for the exclusion file if it does not exist
+  DIR=$(dirname "${exclusion_file}")
   if [ ! -e ${EXCLUSION_PATH}/${DIR}  ]
   then
     mkdir -p ${EXCLUSION_PATH}/${DIR}
   fi
 
-  # Copy rather than move, and use -a so a directory is taken whole. The entry has
-  # to stay in place: a deployment with no volume on that path reads it directly
-  # from the image, and Docker populates a new named volume from it.
-  cp -a ${exclusion_path} ${EXCLUSION_PATH}/${exclusion_path}
+  mv ${exclusion_file} ${EXCLUSION_PATH}/${exclusion_file}
 done
 
 # Move permanent files to PERMANENT_PATH
