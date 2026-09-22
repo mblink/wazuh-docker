@@ -230,17 +230,25 @@ services:
   # source shadowed those public Docker Hub tags with locally-built images
   # of the same name, which is fragile on any host also running plain
   # alpine/cwagent containers.
+  #
+  # Ships alerts.json from BOTH managers -- the worker analyzes events from
+  # its own agents and writes its own alerts, which a master-only mount
+  # misses. Each node's log volume is mounted under its own subdirectory
+  # (matching cwagent.json's file_paths), and streams render as
+  # ${LOG_STREAM_PREFIX}_master / _worker in the one log group.
   cloudwatch-agent:
     build:
       context: ../bondlink/build/cloudwatch-agent
       args:
         REGION: us-east-1
-        LOG_GROUP_NAME: wazuh-manager
-        LOG_STREAM_NAME: StagingIDS
+        LOG_GROUP_NAME: ProductionOSSEC
+        LOG_STREAM_PREFIX: prodops02
     image: bondlink/wazuh-cwagent:4.10-align
     hostname: wazuh.cwagent
     restart: always
     depends_on:
       - wazuh.master
+      - wazuh.worker
     volumes:
-      - master-wazuh-logs:/var/ossec/logs:ro
+      - master-wazuh-logs:/var/ossec/logs/master:ro
+      - worker-wazuh-logs:/var/ossec/logs/worker:ro
