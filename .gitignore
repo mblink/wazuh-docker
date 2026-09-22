@@ -16,3 +16,9 @@ multi-node/config/*/certs
 
 # Documentation
 docs/book/
+
+# 4.14 cert-generator output (multi-node/ is pinned to v4.14.0)
+single-node/config/wazuh_indexer_ssl_certs/*.pem
+single-node/config/wazuh_indexer_ssl_certs/*.key
+multi-node/config/wazuh_indexer_ssl_certs/*.pem
+multi-node/config/wazuh_indexer_ssl_certs/*.key
