@@ -1,5 +1,5 @@
 FROM debian:latest AS build
-ARG LOG_STREAM_NAME
+ARG LOG_STREAM_PREFIX
 ARG LOG_GROUP_NAME
 ARG REGION
 
@@ -12,8 +12,11 @@ COPY ./config/cwagent.json /root/cwagent_tmpl.json
 # Fixed: the 4.10 fork's jq filter wrapped ${VAR} in single quotes, so bash
 # never interpolated it and the agent silently fell back to the hardcoded
 # template values. Using --arg passes the build args through properly.
-RUN jq --arg stream "$LOG_STREAM_NAME" --arg group "$LOG_GROUP_NAME" --arg region "$REGION" \
-      '.logs.logs_collected.files.collect_list[0].log_stream_name = $stream | .logs.logs_collected.files.collect_list[0].log_group_name = $group | .agent.region = $region' \
+# Applied to every collect_list entry (master + worker alerts), not just
+# [0]: each entry's templated log_stream_name is the node suffix, rendered
+# as "${LOG_STREAM_PREFIX}_<node>" (e.g. prodops02_master), all in one group.
+RUN jq --arg prefix "$LOG_STREAM_PREFIX" --arg group "$LOG_GROUP_NAME" --arg region "$REGION" \
+      '.logs.logs_collected.files.collect_list |= map(.log_stream_name = "\($prefix)_\(.log_stream_name)" | .log_group_name = $group) | .agent.region = $region' \
       /root/cwagent_tmpl.json > /etc/cwagentconfig/cwagent.json
 # Fixed: the 4.10 fork hardcoded the debian/amd64 package, which fails to
 # install on arm64 hosts (e.g. Apple Silicon dev/test machines) -- dpkg's
