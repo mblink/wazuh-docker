@@ -315,3 +315,4 @@ volumes:
   wazuh-indexer-data-3:
   wazuh-dashboard-config:
   wazuh-dashboard-custom:
+  worker-wazuh-active-response:

@@ -99,7 +99,7 @@ services:
       - worker-wazuh-queue:/var/ossec/queue
       - worker-wazuh-var-multigroups:/var/ossec/var/multigroups
       - worker-wazuh-integrations:/var/ossec/integrations
-      - worker-wazuh-active-response:/var/ossec/active-response/bin
+      # - worker-wazuh-active-response:/var/ossec/active-response/bin
       - worker-wazuh-agentless:/var/ossec/agentless
       - worker-wazuh-wodles:/var/ossec/wodles
       - worker-filebeat-etc:/etc/filebeat
