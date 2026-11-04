@@ -7,8 +7,6 @@ nodes:
       ip: wazuh2.indexer
     - name: wazuh3.indexer
       ip: wazuh3.indexer
-    - name: wazuh-warm1.indexer
-      ip: wazuh-warm1.indexer
 
   # Wazuh server nodes
   # Use node_type only with more than one Wazuh manager
