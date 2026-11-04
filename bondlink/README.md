@@ -15,8 +15,8 @@ tracks this branch directly until the PR merges and it can be pointed at
 `main`.
 
 Purpose: `bondlink/` is a pure compose-overlay carrying forward BondLink's
-production customizations (email alerting, warm indexer tier + ISM lifecycle
-policy, HTTP-only dashboard behind HAProxy, CloudWatch sidecar,
+production customizations (email alerting, ISM lifecycle policy, HTTP-only
+dashboard behind HAProxy, CloudWatch sidecar,
 etc.) on top of this repo's own upstream-tracked `multi-node/docker-compose.yml`
 — without ever editing that file directly, which is what keeps this
 upstream-mergeable. Stock wazuh-docker (since 4.x) already mounts full
@@ -103,8 +103,7 @@ deliberately *not* `env_file:` on those services, since
 Without `--env-file`, the `${VAR}` references resolve to empty strings, not
 silently to the upstream stock example values.
 
-Cert generation (run once per checkout, before `up`, after adding
-wazuh-warm1.indexer to bondlink/config/certs.yml). **Certs are gitignored
+Cert generation (run once per checkout, before `up`). **Certs are gitignored
 and live under `multi-node/config/wazuh_indexer_ssl_certs/`, inside this
 checkout** — they do not survive a move to a different checkout directory
 (confirmed live 2026-09-18, moving to a renamed checkout: every missing
@@ -121,13 +120,6 @@ docker compose \
   -f multi-node/generate-indexer-certs.yml \
   -f bondlink/docker-compose.certs.override.yml \
   run --rm generator
-```
-
-Warm-tier indexer (on the separate warm host, once certs are copied there —
-see below):
-
-```
-docker compose -f docker-compose-warm.yml up -d
 ```
 
 Always sanity-check a merged config before applying changes (include
@@ -154,14 +146,13 @@ needed there, redeclaring a key just replaces its value. Verified live via
 
 ## What's ported, and what was fixed along the way
 
-- **Warm indexer tier**: `docker-compose-warm.yml` + `config/wazuh_indexer/wazuh-warm1.indexer.yml`. **Fixed**: the 4.10 source's compose file referenced `wazuh-warm1.indexer.yml` and `wazuh-warm1.indexer*.pem`, but the actual tracked files were named without the "1" (`wazuh-warm.indexer.yml`) — as committed, that compose file would have failed to start. Standardized on the "1" suffix everywhere, matching `certs.yml` and every hot node's `NODES_DN` entry.
 - **ISM hot/warm/delete lifecycle policy**: `config/wazuh_indexer/ism-policies/` — ported as-is (pure OpenSearch API calls via `apply-ism-policy.sh`, no host-specific assumptions beyond the target indexer host you pass it).
-- **Hot-indexer tuning**: `node.attr.temp: hot`, `path.repo: /mnt/backups`, `plugins.security.ssl.transport.enabled_protocols: ["TLSv1.2"]`, `plugins.query.datasources.encryption.masterkey`, and the warm node's DN added to `plugins.security.nodes_dn` — all in `config/wazuh_indexer/wazuh{1,2,3}.indexer.yml`. Dropped a stray commented-out `discovery.type: "single-node"` line and fixed inconsistent list indentation found in the source (cosmetic, not behavioral).
-- **Manager/worker `ossec.conf`**: full replacement files in `config/wazuh_cluster/`, carried forward from the source verbatim (SMTP relay, email alerting, CIS-CAT wodle, active-response CIDR whitelist, cluster key, indexer host list including the warm node on master only) — these are your real production values as agreed, to be rotated later (see Secrets below). **Fixed**: the worker conf's source had a stray `<key>` element directly inside `<global>` (not a valid ossec.conf setting, just a copy-paste artifact) — dropped; the real cluster key is in `<cluster><key>` on both files, matching.
+- **Hot-indexer tuning**: `node.attr.temp: hot`, `path.repo: /mnt/backups`, `plugins.security.ssl.transport.enabled_protocols: ["TLSv1.2"]`, `plugins.query.datasources.encryption.masterkey` — all in `config/wazuh_indexer/wazuh{1,2,3}.indexer.yml`. Dropped a stray commented-out `discovery.type: "single-node"` line and fixed inconsistent list indentation found in the source (cosmetic, not behavioral).
+- **Manager/worker `ossec.conf`**: full replacement files in `config/wazuh_cluster/`, carried forward from the source verbatim (SMTP relay, email alerting, CIS-CAT wodle, active-response CIDR whitelist, cluster key, indexer host list) — these are your real production values as agreed, to be rotated later (see Secrets below). **Fixed**: the worker conf's source had a stray `<key>` element directly inside `<global>` (not a valid ossec.conf setting, just a copy-paste artifact) — dropped; the real cluster key is in `<cluster><key>` on both files, matching.
 - **Dashboard HTTP-only behind HAProxy**: `config/wazuh_dashboard/opensearch_dashboards.yml` — port 80, `server.ssl.enabled: false`, matching the source (which also intentionally dropped the stock file's `opensearch_security.cookie.ttl`/`session.ttl`/`session.keepalive` overrides — carried forward as-is here too).
-- **Cert topology**: `config/certs.yml` — added `wazuh-warm1.indexer`, and `wazuh.master`'s `ip:` set to the real prod hostname (`prodops02.bondlink.vpc`), matching the source.
+- **Cert topology**: `config/certs.yml` — `wazuh.master`'s `ip:` set to the real prod hostname (`prodops02.bondlink.vpc`), matching the source.
 - **`/mnt/backups` shared mount + `/var/wazuh/imports`**: added to manager, dashboard, and all 3 hot indexers.
-- **`host.docker.internal`/`wazuh-warm1.indexer` extra_hosts + static IP** on master/worker, for the warm node running on a separate host/compose project.
+- **`host.docker.internal` extra_hosts** on master/worker.
 - **`root-ca.pem`, not `root-ca-manager.pem`**, mounted into `wazuh.master`/`wazuh.worker`'s `/etc/ssl/root-ca.pem`. **Fixed**: both the source and upstream's own stock `multi-node/docker-compose.yml` reference `root-ca-manager.pem` there, but nothing — not the cert-generator, not any README, not upstream's own docs — ever produces a file by that name. It's the same cluster-wide root CA every other service already mounts under its real name; confirmed live that there's no actual second cert, just an undocumented manual-copy step from some earlier setup that broke the first time a fresh checkout needed certs generated from scratch.
 - **CloudWatch-agent sidecar**: `build/cloudwatch-agent/`. **Fixed two real bugs**: (1) the `jq` filter wrapped `${VAR}` in single quotes, so the build args for log group/stream/region were never actually interpolated and the agent silently used hardcoded template values instead; switched to `jq --arg`. (2) The image was built to shadow the public `amazon/cloudwatch-agent` tag — fragile on any host running unrelated containers under that name; renamed to `bondlink/wazuh-cwagent:4.10-align`, built directly via `build:` in the override (no separate `build-images.yml`/`build-images.sh` needed — that file's own bug, silently wiping the sidecar env vars from `.env` on rebuild, is sidestepped entirely by putting the build args directly in the compose override).
 
@@ -215,8 +206,7 @@ checkout means the checkout step itself randomly fails ("device or
 resource busy") any time the corresponding container happens to be running
 when salt applies — confirmed live on production. So the salt state
 renders these files into `/etc/wazuh-docker-runtime/` instead (outside the
-git checkout entirely) and `docker-compose.override.yml`/
-`docker-compose-warm.yml` mount from there — the checkout itself is never
+git checkout entirely) and `docker-compose.override.yml` mounts from there — the checkout itself is never
 bind-mounted into anything, so it can always be freely refreshed.
 
 **Why**: `INDEXER_USERNAME`/`INDEXER_PASSWORD` and `DASHBOARD_USERNAME`/
@@ -318,10 +308,6 @@ cluster, since nothing about a fresh bootstrap changes what's baked into
 that file. That makes a wiped staging bring-up a faithful rehearsal of the
 real production sequence above, not a shortcut around it.
 
-## Warm-host deployment note
-
-`docker-compose-warm.yml` expects `./config/wazuh_indexer_ssl_certs/{root-ca,wazuh-warm1.indexer,wazuh-warm1.indexer-key,admin,admin-key}.pem` and `./config/wazuh_indexer/internal_users.yml` relative to wherever it's run, plus `/etc/wazuh-docker-runtime/wazuh-warm1.indexer.yml` (an absolute path, not relative to this compose file). Since the warm node deploys on a separate host — one this salt state doesn't manage — copy these over manually: the certs and `internal_users.yml` alongside this compose file as before (the cert-generator step above produces the `.pem` files on the main host under `multi-node/config/wazuh_indexer_ssl_certs/`), and `wazuh-warm1.indexer.yml` from the main host's `/etc/wazuh-docker-runtime/wazuh-warm1.indexer.yml` (already salt-rendered with the real masterkey) to the same absolute path on the warm host. Re-copy that last file after any masterkey rotation.
-
 ## Syncing with upstream Wazuh releases
 
 To pull in a newer upstream release (a later 4.14.x patch, or eventually the
@@ -352,8 +338,7 @@ To pull in a newer upstream release (a later 4.14.x patch, or eventually the
 
 ## Image pinning
 
-`wazuh.master`/`wazuh.worker`, `wazuh1/2/3.indexer` (and the warm node in
-`docker-compose-warm.yml`), and `wazuh.dashboard` are pinned by digest
+`wazuh.master`/`wazuh.worker`, `wazuh1/2/3.indexer`, and `wazuh.dashboard` are pinned by digest
 (`image: wazuh/wazuh-<component>@sha256:...`) rather than by the floating
 `4.14.0` tag. This isn't cosmetic: `docker pull` against all three
 `wazuh/wazuh-*:4.14.0` tags on 2026-09-16 reported **"Downloaded newer

@@ -43,7 +43,6 @@ services:
     image: wazuh/wazuh-manager@sha256:d2387a8304391600154c7b8604b390c8b798ec1403b5f1f707703bafdb230f84
     extra_hosts:
       - "host.docker.internal:host-gateway"
-      - "wazuh-warm1.indexer:10.0.2.103"
     # Real values come from bondlink/.env.secrets (salt-rendered, gitignored --
     # see salt/wazuh-docker/init.sls's wazuh-docker-env-secrets state) via
     # compose's ${VAR} substitution -- NOT env_file:, which loses to
@@ -88,7 +87,6 @@ services:
     image: wazuh/wazuh-manager@sha256:d2387a8304391600154c7b8604b390c8b798ec1403b5f1f707703bafdb230f84
     extra_hosts:
       - "host.docker.internal:host-gateway"
-      - "wazuh-warm1.indexer:10.0.2.103"
     environment:
       INDEXER_USERNAME: ${INDEXER_USERNAME}
       INDEXER_PASSWORD: ${INDEXER_PASSWORD}
