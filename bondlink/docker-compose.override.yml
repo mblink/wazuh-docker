@@ -85,6 +85,9 @@ services:
       - ./config/wazuh_indexer_ssl_certs/wazuh.master.pem:/var/ossec/api/configuration/ssl/server.crt:ro
       - ./config/wazuh_indexer_ssl_certs/wazuh.master-key.pem:/var/ossec/api/configuration/ssl/server.key:ro
       - /etc/wazuh-docker-runtime/wazuh_manager.conf:/wazuh-config-mount/etc/ossec.conf
+      # Alerts for the CIS audit rule keys; salt renders it and recreates the
+      # container when it changes, since a file bind mount keeps the old inode.
+      - /etc/wazuh-docker-runtime/bondlink_audit_rules.xml:/var/ossec/etc/rules/bondlink_audit_rules.xml:ro
       - /var/wazuh/imports:/var/ossec/imports
       - /mnt/backups:/mnt/backups:shared
 
@@ -112,6 +115,9 @@ services:
       - ./config/wazuh_indexer_ssl_certs/wazuh.worker.pem:/etc/ssl/filebeat.pem
       - ./config/wazuh_indexer_ssl_certs/wazuh.worker-key.pem:/etc/ssl/filebeat.key
       - /etc/wazuh-docker-runtime/wazuh_worker.conf:/wazuh-config-mount/etc/ossec.conf
+      # Alerts for the CIS audit rule keys; salt renders it and recreates the
+      # container when it changes, since a file bind mount keeps the old inode.
+      - /etc/wazuh-docker-runtime/bondlink_audit_rules.xml:/var/ossec/etc/rules/bondlink_audit_rules.xml:ro
       - /var/wazuh/imports:/var/ossec/imports
       - /mnt/backups:/mnt/backups:shared
 
