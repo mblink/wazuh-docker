@@ -79,6 +79,11 @@ services:
       - ./config/wazuh_indexer_ssl_certs/root-ca.pem:/etc/ssl/root-ca.pem
       - ./config/wazuh_indexer_ssl_certs/wazuh.master.pem:/etc/ssl/filebeat.pem
       - ./config/wazuh_indexer_ssl_certs/wazuh.master-key.pem:/etc/ssl/filebeat.key
+      # The API (55000) serves the same cert in place of the stock self-signed one, so
+      # clients verify it against root-ca.pem as prodops02.bondlink.vpc, its SAN.
+      # Both files must stay readable by uid 999 (wazuh), as they are.
+      - ./config/wazuh_indexer_ssl_certs/wazuh.master.pem:/var/ossec/api/configuration/ssl/server.crt:ro
+      - ./config/wazuh_indexer_ssl_certs/wazuh.master-key.pem:/var/ossec/api/configuration/ssl/server.key:ro
       - /etc/wazuh-docker-runtime/wazuh_manager.conf:/wazuh-config-mount/etc/ossec.conf
       - /var/wazuh/imports:/var/ossec/imports
       - /mnt/backups:/mnt/backups:shared
